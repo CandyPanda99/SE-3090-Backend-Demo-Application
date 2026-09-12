@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Coverage settings for the "XPlat Code Coverage" data collector used by dotnet test.
+
+  Keeping the format here rather than on the command line means a local run produces
+  exactly the same report the CI job uploads to Codacy. OpenCover is one of the formats
+  Codacy parses directly - see https://docs.codacy.com/coverage-reporter/.
+-->
+<RunSettings>
+  <DataCollectionRunSettings>
+    <DataCollectors>
+      <DataCollector friendlyName="XPlat code coverage">
+        <Configuration>
+          <Format>opencover</Format>
+
+          <!-- EF Core migrations are generated, and scaffolding them is not a decision
+               anyone tests. Leaving them in would dilute the percentage with code that
+               nobody wrote by hand. -->
+          <ExcludeByFile>**/Migrations/*.cs</ExcludeByFile>
+
+          <ExcludeByAttribute>GeneratedCodeAttribute,CompilerGeneratedAttribute,ExcludeFromCodeCoverageAttribute</ExcludeByAttribute>
+
+          <!-- Trivial get/set bodies are noise; excluding them makes the number reflect
+               real logic. -->
+          <SkipAutoProps>true</SkipAutoProps>
+        </Configuration>
+      </DataCollector>
+    </DataCollectors>
+  </DataCollectionRunSettings>
+</RunSettings>

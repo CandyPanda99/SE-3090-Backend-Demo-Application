@@ -11,7 +11,12 @@
 # For more information on Codacy Analysis CLI in general, see
 # https://github.com/codacy/codacy-analysis-cli.
 
-name: Codacy Security Scan
+# It then runs the test suite with coverage instrumentation and uploads the
+# report to Codacy, which turns it into the repository coverage metrics and the
+# per-pull-request coverage diff. For the supported report formats and the
+# upload contract, see https://docs.codacy.com/coverage-reporter/.
+
+name: Codacy
 
 on:
   push:
@@ -59,3 +64,74 @@ jobs:
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: results.sarif
+
+  codacy-coverage-reporter:
+    # Coverage is attached to a commit SHA, so the weekly scheduled run would
+    # only re-upload the report that the last push already sent.
+    if: github.event_name != 'schedule'
+    permissions:
+      contents: read # for actions/checkout to fetch code
+    name: Codacy Coverage Reporter
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore BackendApplication.sln
+
+      - name: Build
+        run: dotnet build BackendApplication.sln --configuration Release --no-restore
+
+      # Coverlet runs as a data collector inside the test host and writes one
+      # OpenCover report per test project under ./coverage. This requires every
+      # test project to reference the `coverlet.collector` package, otherwise
+      # the collector is not found and no report is produced. The report format
+      # and the exclusions live in coverlet.runsettings, so a local run produces
+      # exactly what this job uploads.
+      - name: Run tests with coverage
+        run: >
+          dotnet test BackendApplication.sln
+          --configuration Release
+          --no-build
+          --collect:"XPlat Code Coverage"
+          --settings coverlet.runsettings
+          --results-directory coverage
+
+      # The collector nests each report in a random per-run GUID directory, so
+      # resolve the real paths into the comma-separated list the reporter wants.
+      - name: Locate coverage reports
+        id: coverage
+        run: |
+          reports="$(find coverage -name 'coverage.opencover.xml' | sort | paste -sd, -)"
+          if [ -z "$reports" ]; then
+            echo "::error::dotnet test produced no OpenCover report under ./coverage"
+            exit 1
+          fi
+          echo "Found coverage reports: $reports"
+          echo "reports=$reports" >> "$GITHUB_OUTPUT"
+
+      - name: Upload coverage to Codacy
+        uses: codacy/codacy-coverage-reporter-action@89d6c85cfafaec52c72b6c5e8b2878d33104c699 # v1.3.0
+        with:
+          # Same repository token as the analysis job above.
+          project-token: ${{ secrets.CODACY_PROJECT_TOKEN }}
+          coverage-reports: ${{ steps.coverage.outputs.reports }}
+          # OpenCover XML is also emitted by other .NET tools, so name the
+          # parser instead of relying on format detection.
+          force-coverage-parser: opencover
+
+      # Keeps the raw report available for debugging a coverage number that
+      # does not match what Codacy shows.
+      - name: Upload coverage report as an artifact
+        if: always() && steps.coverage.outputs.reports != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-opencover
+          path: coverage/**/coverage.opencover.xml
+          if-no-files-found: ignore

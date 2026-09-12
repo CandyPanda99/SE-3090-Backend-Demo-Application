@@ -202,6 +202,33 @@ response carries `allowedNextStatuses`, so a client never hard-codes the table a
 
 ---
 
+## Tests and coverage
+
+Unit tests live in [`BackendApplication.Tests`](BackendApplication.Tests) and need nothing
+running — no database, no container. They are a deliberate sample of the domain rules
+rather than a full sweep of the codebase, so expect the coverage percentage to be low and
+to move as the suite grows.
+
+```bash
+# Just the tests
+dotnet test
+
+# Tests plus an OpenCover report, the same way CI does it
+dotnet test --collect:"XPlat Code Coverage" --settings coverlet.runsettings --results-directory coverage
+```
+
+The report lands at `coverage/<guid>/coverage.opencover.xml`. Format and exclusions are set
+once in [`coverlet.runsettings`](coverlet.runsettings) — generated EF Core migrations are
+left out, since scaffolding is not a decision anyone tests.
+
+On every push and pull request to `main`, the `Codacy Coverage Reporter` job in
+[`.github/workflows/codacy.yml`](.github/workflows/codacy.yml) runs the same command and
+uploads the result, following Codacy's
+[coverage reporter guide](https://docs.codacy.com/coverage-reporter/). It needs one
+repository secret, **`CODACY_PROJECT_TOKEN`** — the same token the security-scan job uses,
+found under *Codacy → your repository → Settings → Coverage*. Without it the upload step
+fails while the tests still run.
+
 ## What is demonstrated
 
 Controllers · services · DTOs · EF Core with PostgreSQL · the repository pattern ·

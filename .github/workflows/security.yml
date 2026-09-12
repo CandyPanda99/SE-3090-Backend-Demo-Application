@@ -1,0 +1,185 @@
+# Free static security scanning, all of it reporting into one place.
+#
+# The repository's Security tab is the aggregation layer here. Every job below
+# emits SARIF and uploads it under its own category, so findings from three
+# different tools land in a single triage list instead of three dashboards.
+# That aggregation is the job a commercial platform such as Kenna does; on a
+# public repository GitHub does it for nothing.
+#
+#   CodeQL              GitHub's own SAST engine, reading the C# itself.
+#   Trivy (config)      Dockerfile misconfiguration, plus secrets committed to
+#                       the tree.
+#   Trivy (image)       CVEs in the OS packages and the .NET dependencies that
+#                       actually ship inside the container.
+#   Dependency review   Blocks a pull request that introduces a known-vulnerable
+#                       dependency. The only job here that fails the build.
+#
+# Dependabot is the fourth tool and needs no workflow of its own - it is
+# configured in .github/dependabot.yml.
+
+name: Security
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  schedule:
+    # Monday 03:30 UTC. Advisory databases change long after the code stops
+    # changing, so a re-scan on a quiet repository still finds new things.
+    - cron: '30 3 * * 1'
+
+# Least privilege by default; each job widens this only as far as it needs to.
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # CodeQL: static analysis of the C# source
+  # ---------------------------------------------------------------------------
+  # Looks for vulnerabilities in code that was written here - SQL injection,
+  # path traversal, unsafe deserialisation, hardcoded credentials - by tracing
+  # untrusted input from where it enters to where it is used.
+  codeql:
+    name: CodeQL (C#)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write # to upload the SARIF results
+      actions: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Initialise CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: csharp
+          # `manual` means CodeQL watches the build below and analyses exactly
+          # what the compiler touched. `autobuild` has to guess how to build the
+          # project, and guesses badly when a specific SDK is required.
+          build-mode: manual
+          # The default suite is tuned for a low false-positive rate on large
+          # codebases. `security-extended` adds slower, noisier queries, which
+          # is the right trade for a teaching repository.
+          queries: security-extended
+
+      - name: Build
+        run: dotnet build BackendApplication.sln --configuration Release
+
+      - name: Analyse
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:csharp"
+
+  # ---------------------------------------------------------------------------
+  # Trivy: configuration and secrets, scanned straight from the working tree
+  # ---------------------------------------------------------------------------
+  # No build needed. Reads the Dockerfile for insecure instructions and greps
+  # every file for credential-shaped strings. Trivy has no misconfiguration
+  # policies for docker-compose.yml, so that file is covered only by the secret
+  # scanner. Expect this job to come back clean - a scanner that reports nothing
+  # because there is nothing to report is a result, not a broken job.
+  trivy-config:
+    name: Trivy (config and secrets)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Scan the repository
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: misconfig,secret
+          format: sarif
+          output: trivy-config.sarif
+          severity: MEDIUM,HIGH,CRITICAL
+          limit-severities-for-sarif: true
+          # Report rather than block: the upload below is the deliverable, and a
+          # non-zero exit here would skip it.
+          exit-code: '0'
+
+      - name: Upload results
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-config.sarif
+          # Distinct category per tool, otherwise each upload replaces the last.
+          category: trivy-config
+
+  # ---------------------------------------------------------------------------
+  # Trivy: CVEs in the image that actually ships
+  # ---------------------------------------------------------------------------
+  # This is the job that reliably finds something. Scanning source tells you
+  # about code you wrote; scanning the image tells you about the Ubuntu packages
+  # in the .NET base image and the NuGet assemblies in the published output -
+  # which is most of what an attacker would actually reach. A local run of this
+  # scan returned 17 OS CVEs and 4 NuGet ones.
+  trivy-image:
+    name: Trivy (container image)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Build context is the repository root; the Dockerfile copies paths
+      # relative to it. Same arrangement docker-compose.yml uses.
+      - name: Build the image
+        run: docker build -f BackendApplication/Dockerfile -t backendapplication:ci .
+
+      - name: Scan the image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: backendapplication:ci
+          scanners: vuln
+          format: sarif
+          output: trivy-image.sarif
+          severity: MEDIUM,HIGH,CRITICAL
+          limit-severities-for-sarif: true
+          # Deliberately NOT ignore-unfixed. Most base-image CVEs have no patch
+          # available yet, and pretending they do not exist is how a green
+          # dashboard stops meaning anything.
+          ignore-unfixed: false
+          exit-code: '0'
+
+      - name: Upload results
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-image.sarif
+          category: trivy-image
+
+  # ---------------------------------------------------------------------------
+  # Dependency review: the gate
+  # ---------------------------------------------------------------------------
+  # Compares the pull request's dependency graph against the base branch and
+  # fails if the change ADDS a package with a known advisory. Existing problems
+  # are not re-reported, so this stays quiet until someone makes things worse.
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write # to write the summary comment
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Review the dependency changes
+        uses: actions/dependency-review-action@v5
+        with:
+          fail-on-severity: moderate
+          comment-summary-in-pr: on-failure

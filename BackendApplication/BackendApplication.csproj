@@ -45,4 +45,34 @@
     <PackageReference Include="Scalar.AspNetCore" Version="2.16.16" />
   </ItemGroup>
 
+  <!--
+    =========================================================================
+     DELIBERATELY VULNERABLE. TEACHING AID. DO NOT COPY INTO REAL WORK.
+    =========================================================================
+     SixLabors.ImageSharp 2.1.8 is an image-processing library that an API like
+     this one might plausibly use to resize an avatar upload. This version is
+     three years of advisories behind:
+
+       GHSA-2cmq-823j-5qj8  high    out-of-bounds write    fixed in 2.1.10
+       GHSA-63p8-c4ww-9cg7  high    out-of-bounds write    fixed in 2.1.9
+       GHSA-qxrv-gp6x-rc23  medium  memory exhaustion      fixed in 2.1.9
+       GHSA-rxmq-m78w-7wmc  medium  infinite loop (GIF)    fixed in 2.1.11
+
+     One pin, four findings, from a library whose whole job is parsing files a
+     stranger uploaded. It is here so the security workflow has something real
+     to find: Dependabot raises the alerts and opens a fix pull request, Trivy
+     reports them against the published image, and the SDK's own package check
+     prints them. A scan that finds nothing teaches nothing.
+
+     Nothing in this project references it, so no vulnerable code path is
+     reachable at runtime.
+
+     To make the repository clean again: delete this ItemGroup, or take
+     Dependabot's pull request, which moves it to a patched version.
+    =========================================================================
+  -->
+  <ItemGroup>
+    <PackageReference Include="SixLabors.ImageSharp" Version="2.1.8" />
+  </ItemGroup>
+
 </Project>

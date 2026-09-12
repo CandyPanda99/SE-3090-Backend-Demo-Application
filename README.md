@@ -229,6 +229,68 @@ repository secret, **`CODACY_PROJECT_TOKEN`** — the same token the security-sc
 found under *Codacy → your repository → Settings → Coverage*. Without it the upload step
 fails while the tests still run.
 
+---
+
+## Security scanning
+
+Four free tools run against this repository, and every one of them reports into the
+same place - the repository's **Security** tab. That aggregation is the point: findings
+arrive from different scanners in different formats, and GitHub merges them into one
+triage list. Paying products such as Kenna exist to do exactly that; on a public
+repository it costs nothing.
+
+| Tool | What it looks at | Where it is configured |
+|---|---|---|
+| **CodeQL** | The C# itself - injection, path traversal, unsafe deserialisation | [`security.yml`](.github/workflows/security.yml) |
+| **Trivy** (config) | Dockerfile misconfiguration, committed secrets | [`security.yml`](.github/workflows/security.yml) |
+| **Trivy** (image) | CVEs in the OS packages and NuGet assemblies that actually ship | [`security.yml`](.github/workflows/security.yml) |
+| **Dependabot** | Vulnerable NuGet packages, stale actions, stale base images | [`dependabot.yml`](.github/dependabot.yml) |
+| **Dependency review** | Fails a pull request that *adds* a vulnerable dependency | [`security.yml`](.github/workflows/security.yml) |
+
+Codacy runs alongside these from [`codacy.yml`](.github/workflows/codacy.yml). None of it
+needs a paid plan, and only Codacy needs a secret.
+
+### The planted vulnerability
+
+`BackendApplication.csproj` pins **SixLabors.ImageSharp 2.1.8** on purpose. It is three
+years of advisories behind - two high, two moderate - and nothing in the code references
+it, so no vulnerable path is reachable at runtime. It is there because a security demo
+that finds nothing teaches nothing.
+
+You can see it without any CI at all:
+
+```bash
+dotnet list package --vulnerable --include-transitive
+```
+
+It also appears as `NU1903` warnings on every build. The full explanation, including how
+to remove it, is in the comment above that `ItemGroup`.
+
+> **Before the demo:** Dependabot will open a pull request that upgrades ImageSharp and
+> quietly fixes the thing you were going to demonstrate. Leave that PR unmerged until
+> afterwards - then merge it live and watch the alerts close.
+
+### What each tool will actually find
+
+Worth setting expectations before showing this to a room:
+
+- **Trivy (image)** - always finds something. A local run of this exact scan reported
+  **17 CVEs in the Ubuntu 24.04 packages** inside `mcr.microsoft.com/dotnet/aspnet:10.0`,
+  none of which any application code caused, and none of which had a fix available yet.
+  That is the lesson: you can write perfect code and still ship vulnerabilities. It also
+  found the **4 ImageSharp advisories** in the published output.
+- **Trivy (config and secrets)** - comes back clean. The Dockerfile already runs as a
+  non-root user and leaks nothing, so there is no misconfiguration to report. Worth
+  showing anyway: a green scanner you have seen find real problems elsewhere is
+  evidence, not decoration.
+- **Dependabot** and **`dotnet list package`** - find the planted ImageSharp advisories.
+- **Dependency review** - the only gate that *blocks*. It compares against the base
+  branch, so it fires on the pull request that introduces a bad dependency and stays
+  silent afterwards.
+- **CodeQL** - likely finds little here, and that is a fair result rather than a broken
+  setup. It reads the application's own code, and this codebase parameterises its queries,
+  hashes its passwords and validates its input.
+
 ## What is demonstrated
 
 Controllers · services · DTOs · EF Core with PostgreSQL · the repository pattern ·

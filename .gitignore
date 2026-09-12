@@ -295,3 +295,7 @@ $RECYCLE.BIN/
 .directory
 .Trash-*
 .nfs*
+
+
+#Ignore vscode AI rules
+.github/instructions/codacy.instructions.md

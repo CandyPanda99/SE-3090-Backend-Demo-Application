@@ -1,0 +1,61 @@
+# Dependabot needs no workflow of its own - GitHub runs it from this file, free on
+# every repository. It does two things the scanners in security.yml cannot: it watches
+# the advisory databases continuously rather than only when CI runs, and it opens a
+# pull request with the fix already applied.
+
+version: 2
+
+updates:
+  # ---------------------------------------------------------------------------
+  # NuGet packages
+  # ---------------------------------------------------------------------------
+  # Reads every .csproj under the repository root, so both the API and the test
+  # project are covered by this one entry.
+  - package-ecosystem: nuget
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "04:00"
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - security
+    commit-message:
+      prefix: "chore(deps)"
+
+  # ---------------------------------------------------------------------------
+  # GitHub Actions
+  # ---------------------------------------------------------------------------
+  # Workflow steps run with repository write access, so a compromised action is a
+  # supply-chain problem. The actions here are pinned to commit SHAs where the
+  # publisher is a third party; this keeps those pins moving forward.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "04:00"
+    labels:
+      - dependencies
+      - ci
+    commit-message:
+      prefix: "ci(deps)"
+
+  # ---------------------------------------------------------------------------
+  # Docker base images
+  # ---------------------------------------------------------------------------
+  # The largest source of CVEs in this repository is not its own code, it is the
+  # operating system inside mcr.microsoft.com/dotnet/aspnet. Base images are
+  # rebuilt with patches far more often than most projects rebuild against them.
+  - package-ecosystem: docker
+    directory: "/BackendApplication"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "04:00"
+    labels:
+      - dependencies
+      - docker
+    commit-message:
+      prefix: "chore(docker)"

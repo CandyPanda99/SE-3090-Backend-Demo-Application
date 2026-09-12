@@ -1,0 +1,140 @@
+# =============================================================================
+#  BackendApplication - Tasks API - Docker Compose
+# =============================================================================
+#  Run it:
+#      docker compose up -d --build
+#
+#  What you get:
+#      API         http://localhost:8080/scalar
+#      PostgreSQL  localhost:5432   (tasksuser / taskspass / tasksdb)
+#
+#  Reset to a clean database:
+#      docker compose down -v && docker compose up -d --build
+# =============================================================================
+
+# The Compose PROJECT NAME, set explicitly rather than left to default.
+#
+# Compose otherwise derives it from the containing directory - here that would be
+# the unhelpful "8", which then prefixes every image and network it builds. Naming
+# it means the image is `backendapplication-api` rather than `8-api`, and a second
+# compose file added to this directory later cannot silently collide with this one
+# by sharing both a project name and a service name.
+name: backendapplication
+
+services:
+
+  # ===========================================================================
+  #  POSTGRESQL - the database
+  # ===========================================================================
+  postgres:
+    image: postgres:17-alpine
+    container_name: backendapplication-postgres
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_DB: tasksdb
+      POSTGRES_USER: tasksuser
+      # DEMO CREDENTIALS ONLY. In production these come from Docker secrets, a
+      # vault, or your orchestrator - never from a file committed to git.
+      POSTGRES_PASSWORD: taskspass
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+
+    ports:
+      # HOST:CONTAINER. Publishing 5432 lets you connect from your IDE, from psql,
+      # or from a locally-run API. Remove this line in production - a database
+      # should never be reachable from outside its network.
+      - "5432:5432"
+
+    volumes:
+      # A NAMED VOLUME. Without it, `docker compose down` destroys your data,
+      # because a container's own filesystem dies with the container.
+      - postgres-data:/var/lib/postgresql/data
+
+    command:
+      - "postgres"
+      # Must exceed (api replicas x MaxPoolSize). The API is capped at 50.
+      - "-c"
+      - "max_connections=100"
+      - "-c"
+      - "shared_buffers=256MB"
+      # The database-side twin of SlowQueryLoggingInterceptor.
+      - "-c"
+      - "log_min_duration_statement=300"
+
+    healthcheck:
+      # pg_isready returns 0 only once PostgreSQL is genuinely accepting
+      # connections. THIS IS THE KEY TO ORDERED STARTUP: the API waits for it.
+      test: ["CMD-SHELL", "pg_isready -U tasksuser -d tasksdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+    networks:
+      - tasks-network
+
+  # ===========================================================================
+  #  THE API
+  # ===========================================================================
+  api:
+    build:
+      # The build CONTEXT is the repository root, not the project folder, because
+      # the Dockerfile copies `BackendApplication/BackendApplication.csproj`
+      # relative to it.
+      context: .
+      dockerfile: BackendApplication/Dockerfile
+    container_name: backendapplication-api
+    restart: unless-stopped
+
+    depends_on:
+      postgres:
+        # WITHOUT `condition: service_healthy`, Compose starts the API as soon as
+        # the postgres CONTAINER exists - typically several seconds before
+        # PostgreSQL accepts connections - and the API crashes on its first
+        # migration. This one line removes an entire class of flaky startup.
+        condition: service_healthy
+
+    environment:
+      ASPNETCORE_ENVIRONMENT: Docker
+      ASPNETCORE_HTTP_PORTS: 8080
+
+      # DOUBLE UNDERSCORE = the ':' section separator, so this becomes the
+      # configuration key "Database:ConnectionString" and OVERRIDES appsettings,
+      # because environment variables sit higher in the precedence order.
+      #
+      # NOTE `Host=postgres` and `Port=5432`: inside the Compose network the
+      # SERVICE NAME is the DNS hostname, and the container port is the real one.
+      # The published port above is only how the host reaches it from outside.
+      Database__ConnectionString: "Host=postgres;Port=5432;Database=tasksdb;Username=tasksuser;Password=taskspass"
+
+      Database__MinPoolSize: "5"
+      Database__MaxPoolSize: "50"
+      Database__DbContextPoolSize: "128"
+
+      # In production this would come from `secrets:` or a vault, NOT from here.
+      Jwt__Key: "docker-compose-signing-key-3e8b1f6a9d2c7450-change-me-in-prod"
+      Jwt__Issuer: "BackendApplication.TasksApi"
+      Jwt__Audience: "BackendApplication.TasksClients"
+
+    ports:
+      - "8080:8080"
+
+    networks:
+      - tasks-network
+
+# =============================================================================
+#  NAMED VOLUMES - data that must outlive the containers
+# =============================================================================
+#  `docker compose down`      keeps these volumes (data survives).
+#  `docker compose down -v`   DELETES them - the clean-slate reset for a lecture.
+volumes:
+  postgres-data:
+    name: backendapplication-postgres-data
+
+# =============================================================================
+#  NETWORK
+# =============================================================================
+networks:
+  tasks-network:
+    name: backendapplication-network
+    driver: bridge

@@ -1,0 +1,52 @@
+# =============================================================================
+#  .dockerignore - what NOT to send to the Docker daemon
+# =============================================================================
+#  Everything not listed here becomes part of the BUILD CONTEXT, which is copied
+#  to the Docker daemon before the build even starts. Without this file the
+#  context includes bin/, obj/ and .git/ - often hundreds of megabytes - which
+#  makes every build slow AND can bake stale, host-built binaries into the image.
+#
+#  SECURITY ANGLE: it also stops secrets (.env, *.pfx, user secrets) from being
+#  copied into a layer. Deleting a file in a LATER layer does not remove it from
+#  the image - anyone can still extract it from the earlier layer.
+# =============================================================================
+
+# Build output - the image builds its own; host binaries may target another OS.
+**/bin/
+**/obj/
+**/out/
+
+# Version control
+.git/
+.gitignore
+.gitattributes
+
+# IDE / editor
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.DotSettings
+
+# Docker files themselves (not needed inside the image)
+**/Dockerfile*
+**/docker-compose*.yml
+.dockerignore
+
+# Secrets and local environment - MUST never enter an image
+**/*.env
+.env
+**/secrets.json
+**/*.pfx
+**/*.p12
+
+# Docs and scratch files
+**/*.md
+docs/
+guide/
+LICENSE
+
+# macOS / Windows noise
+.DS_Store
+Thumbs.db
